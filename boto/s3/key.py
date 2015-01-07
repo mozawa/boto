@@ -21,6 +21,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
 import email.utils
+import socket
 import errno
 import hashlib
 import mimetypes
@@ -834,33 +835,43 @@ class Key(object):
             if spos is None:
                 # read at least something from a non-seekable fp.
                 self.read_from_stream = True
-            while chunk:
-                chunk_len = len(chunk)
-                data_len += chunk_len
-                if chunked_transfer:
-                    http_conn.send('%x;\r\n' % chunk_len)
-                    http_conn.send(chunk)
-                    http_conn.send('\r\n')
-                else:
-                    http_conn.send(chunk)
-                for alg in digesters:
-                    digesters[alg].update(chunk)
-                if bytes_togo:
-                    bytes_togo -= chunk_len
-                    if bytes_togo <= 0:
-                        break
-                if cb:
-                    i += 1
-                    if i == cb_count or cb_count == -1:
-                        cb(data_len, cb_size)
-                        i = 0
-                if bytes_togo and bytes_togo < self.BufferSize:
-                    chunk = fp.read(bytes_togo)
-                else:
-                    chunk = fp.read(self.BufferSize)
+            try:
+                while chunk:
+                    chunk_len = len(chunk)
+                    data_len += chunk_len
+                    if chunked_transfer:
+                        http_conn.send('%x;\r\n' % chunk_len)
+                        http_conn.send(chunk)
+                        http_conn.send('\r\n')
+                    else:
+                        http_conn.send(chunk)
+                    for alg in digesters:
+                        digesters[alg].update(chunk)
+                    if bytes_togo:
+                        bytes_togo -= chunk_len
+                        if bytes_togo <= 0:
+                            break
+                    if cb:
+                        i += 1
+                        if i == cb_count or cb_count == -1:
+                            cb(data_len, cb_size)
+                            i = 0
+                    if bytes_togo and bytes_togo < self.BufferSize:
+                        chunk = fp.read(bytes_togo)
+                    else:
+                        chunk = fp.read(self.BufferSize)
 
-                if not isinstance(chunk, bytes):
-                    chunk = chunk.encode('utf-8')
+                    if not isinstance(chunk, bytes):
+                        chunk = chunk.encode('utf-8')
+
+            except socket.error, e:
+                if isinstance(e.args, tuple) and e[0] == errno.EPIPE:
+                    response = http_conn.getresponse()
+                    if not response.getheader('location'):
+                        body = response.read()
+                        raise provider.storage_response_error(
+                              response.status, response.reason, body)
+                    return response
 
             self.size = data_len
 
