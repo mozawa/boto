@@ -385,7 +385,7 @@ class HmacAuthV4Handler(AuthHandler, HmacKeys):
     def canonical_uri(self, http_request):
         path = http_request.auth_path
         # Normalize the path
-        # in windows normpath('/') will be '\\' so we chane it back to '/'
+        # in windows normpath('/') will be '\\' so we change it back to '/'
         normalized = posixpath.normpath(path).replace('\\', '/')
         # Then urlencode whatever's left.
         encoded = urllib.parse.quote(normalized)
@@ -570,8 +570,8 @@ class S3HmacAuthV4Handler(HmacAuthV4Handler, AuthHandler):
         path = urllib.parse.urlparse(http_request.path)
         # Because some quoting may have already been applied, let's back it out.
         unquoted = urllib.parse.unquote(path.path)
-        # Requote, this time addressing all characters.
-        encoded = urllib.parse.quote(unquoted)
+        # Requote all characters except: A-Z,a-z,0-9,-,.,_,~,/
+        encoded = urllib.parse.quote(unquoted, '/~')
         return encoded
 
     def canonical_query_string(self, http_request):
