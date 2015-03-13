@@ -577,8 +577,11 @@ class S3HmacAuthV4Handler(HmacAuthV4Handler, AuthHandler):
         # Urlencode the path, **NOT** ``auth_path`` (because vhosting).
         path = urllib.parse.urlparse(http_request.path)
         # Because some quoting may have already been applied, let's back it out.
-        unquoted = urllib.parse.unquote(path.path)
-        # Requote all characters except: A-Z,a-z,0-9,-,.,_,~,/
+        if isinstance(path.path, bytes):
+            unquoted = urllib.parse.unquote(path.path)
+        else:
+            unquoted = urllib.parse.unquote(path.path.encode('utf-8'))
+        # Requote, this time addressing all characters.
         encoded = urllib.parse.quote(unquoted, '/~')
         return encoded
 
