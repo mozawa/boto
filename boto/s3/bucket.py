@@ -98,6 +98,7 @@ class Bucket(object):
 
     def __init__(self, connection=None, name=None, key_class=Key):
         self.name = name
+        self.policyid = None
         self.connection = connection
         self.key_class = key_class
 
@@ -406,6 +407,7 @@ class Bucket(object):
         body = response.read()
         boto.log.debug(body)
         if response.status == 200:
+            self.policyid = response.getheader('x-gmt-policyid')
             rs = ResultSet(element_map)
             h = handler.XmlHandler(rs, self)
             if not isinstance(body, bytes):
