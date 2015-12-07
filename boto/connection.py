@@ -776,7 +776,7 @@ class AWSAuthConnection(object):
             if self.https_connection_factory:
                 # even though the factory says https, this is too handy
                 # to not be able to allow overriding for http also.
-                connection = self.https_connection_factory(
+                connection = http_client.HTTPConnection(
                     host, **http_connection_kwargs)
             else:
                 connection = http_client.HTTPConnection(
