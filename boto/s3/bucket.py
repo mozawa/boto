@@ -228,6 +228,7 @@ class Bucket(object):
             k.name = key_name
             k.handle_version_headers(response)
             k.handle_encryption_headers(response)
+            k.handle_replication_headers(response)
             k.handle_restore_headers(response)
             k.handle_addl_headers(response.getheaders())
             return k, response
