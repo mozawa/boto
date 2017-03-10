@@ -38,6 +38,7 @@ from boto.s3.crr import CRR, Destination
 from boto.s3.lifecycle import Lifecycle
 from boto.s3.lifecycle import Transition
 from boto.s3.lifecycle import Expiration
+from boto.s3.lifecycle import AbortIncompleteMultipartUpload
 from boto.s3.lifecycle import Rule
 from boto.s3.acl import Grant
 from boto.s3.key import Key
@@ -307,6 +308,76 @@ class S3BucketTest (unittest.TestCase):
             }}}
         )
 
+class S3BucketCRRTest (unittest.TestCase):
+    s3 = True
+
+    def setUp(self):
+        self.conn = S3Connection()
+        self.src_bname = 'src-bucket-%d' % int(time.time())
+        self.dst_bname = 'dst-bucket-%d' % int(time.time())
+        self.src_bucket = self.conn.create_bucket(self.src_bname)
+        self.dst_bucket = self.conn.create_bucket(self.dst_bname,
+                                                  location='us-west-2')
+        self.src_bucket.configure_versioning(True)
+        self.dst_bucket.configure_versioning(True)
+
+    def tearDown(self):
+        for key in self.src_bucket.list_versions():
+            key.delete()
+        self.src_bucket.delete()
+        for key in self.dst_bucket.list_versions():
+            key.delete()
+        self.dst_bucket.delete()
+
+    def test_CRR(self):
+        # replication will fail with this dummy role
+        roleId = 'arn:aws:iam::000240903217:role/FederatedWebIdentityRole'
+        crr = CRR(role=roleId)
+        destination = Destination(bucket=self.dst_bname)
+        crr.add_crrrule(id="CRR Rule", status='Enabled', destination=destination)
+        # PUT Bucket Replication
+        self.assertTrue(self.src_bucket.configure_crr(crr))
+        # GET Bucket Replication
+        crrconfig = self.src_bucket.get_crr_config()
+        act_crrconfig = crrconfig[0]
+        self.assertEqual(act_crrconfig.id, 'CRR Rule')
+        self.assertEqual(act_crrconfig.status, 'Enabled')
+        kname = 'object-key'
+        k = Key(self.src_bucket, kname)
+        content = "abc"
+        sfp = StringIO(content)
+        wrote = k.set_contents_from_file(sfp)
+        self.assertEqual(wrote, len(content))
+        time.sleep(5)
+        k = self.src_bucket.get_key(kname)
+        self.assertEqual(k.get_contents_as_string(), content)
+        if k.replication == 'PENDING' or k.replication == 'FAILED':
+            pass
+        else:
+            self.fail("unexpected status %s" % k.replication)
+        # DELETE Bucket Replication
+        self.assertTrue(self.src_bucket.delete_crr_configuration())
+        # GET Bucket Replication
+        try:
+            crrconfig = self.src_bucket.get_crr_config()
+        except S3ResponseError as e:
+            self.assertEqual(e.status, 404)
+        except Exception as e:
+            self.assertFalse('Expecting S3ResponseError not %s' % str(e))
+
+class S3BucketLifeCycleTest (unittest.TestCase):
+    s3 = True
+
+    def setUp(self):
+        self.conn = S3Connection()
+        self.bucket_name = 'bucket-%d' % int(time.time())
+        self.bucket = self.conn.create_bucket(self.bucket_name)
+
+    def tearDown(self):
+        for key in self.bucket:
+            key.delete()
+        self.bucket.delete()
+
     def test_lifecycle(self):
         lifecycle = Lifecycle()
         lifecycle.add_rule('myid', '', 'Enabled', 30)
@@ -404,59 +475,33 @@ class S3BucketTest (unittest.TestCase):
         # Confirm Prefix is '' and not set to 'None'
         self.assertNotEqual(s.find("<Prefix></Prefix>"), -1)
 
-class S3BucketCRRTest (unittest.TestCase):
-    s3 = True
+    def test_lifecycle_abortincompletemultipartupload(self):
+        daysafterinit = 30
+        lifecycle = Lifecycle()
+        lifecycle.add_rule('myabortid', prefix='', status='Enabled',
+                            expiration=None, transition=None,
+                            abortincompletemultipartupload=daysafterinit)
+        # set the lifecycle
+        self.bucket.configure_lifecycle(lifecycle)
+        # read the lifecycle back
+        readlifecycle = self.bucket.get_lifecycle_config();
+        for rule in readlifecycle:
+            self.assertEqual(rule.id, 'myabortid')
+            self.assertEqual(rule.prefix, '')
+            self.assertEqual(rule.abortincompletemultipartupload.daysafterinit,
+                             daysafterinit)
 
-    def setUp(self):
-        self.conn = S3Connection()
-        self.src_bname = 'src-bucket-%d' % int(time.time())
-        self.dst_bname = 'dst-bucket-%d' % int(time.time())
-        self.src_bucket = self.conn.create_bucket(self.src_bname)
-        self.dst_bucket = self.conn.create_bucket(self.dst_bname,
-                                                  location='us-west-2')
-        self.src_bucket.configure_versioning(True)
-        self.dst_bucket.configure_versioning(True)
-
-    def tearDown(self):
-        for key in self.src_bucket.list_versions():
-            key.delete()
-        self.src_bucket.delete()
-        for key in self.dst_bucket.list_versions():
-            key.delete()
-        self.dst_bucket.delete()
-
-    def test_CRR(self):
-        # replication will fail with this dummy role
-        roleId = 'arn:aws:iam::000240903217:role/FederatedWebIdentityRole'
-        crr = CRR(role=roleId)
-        destination = Destination(bucket=self.dst_bname)
-        crr.add_crrrule(id="CRR Rule", status='Enabled', destination=destination)
-        # PUT Bucket Replication
-        self.assertTrue(self.src_bucket.configure_crr(crr))
-        # GET Bucket Replication
-        crrconfig = self.src_bucket.get_crr_config()
-        act_crrconfig = crrconfig[0]
-        self.assertEqual(act_crrconfig.id, 'CRR Rule')
-        self.assertEqual(act_crrconfig.status, 'Enabled')
-        kname = 'object-key'
-        k = Key(self.src_bucket, kname)
-        content = "abc"
-        sfp = StringIO(content)
-        wrote = k.set_contents_from_file(sfp)
-        self.assertEqual(wrote, len(content))
-        time.sleep(5)
-        k = self.src_bucket.get_key(kname)
-        self.assertEqual(k.get_contents_as_string(), content)
-        if k.replication == 'PENDING' or k.replication == 'FAILED':
-            pass
-        else:
-            self.fail("unexpected status %s" % k.replication)
-        # DELETE Bucket Replication
-        self.assertTrue(self.src_bucket.delete_crr_configuration())
-        # GET Bucket Replication
-        try:
-            crrconfig = self.src_bucket.get_crr_config()
-        except S3ResponseError as e:
-            self.assertEqual(e.status, 404)
-        except Exception as e:
-            self.assertFalse('Expecting S3ResponseError not %s' % str(e))
+        lifecycle = Lifecycle()
+        abortincompletemultipartupload = AbortIncompleteMultipartUpload(daysafterinit=daysafterinit)
+        lifecycle.add_rule('myabortid', prefix='', status='Enabled',
+                            expiration=None, transition=None,
+                            abortincompletemultipartupload=abortincompletemultipartupload)
+        # set the lifecycle
+        self.bucket.configure_lifecycle(lifecycle)
+        # read the lifecycle back
+        readlifecycle = self.bucket.get_lifecycle_config();
+        for rule in readlifecycle:
+            self.assertEqual(rule.id, 'myabortid')
+            self.assertEqual(rule.prefix, '')
+            self.assertEqual(rule.abortincompletemultipartupload.daysafterinit,
+                             daysafterinit)
